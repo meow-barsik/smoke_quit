@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "875995118497",
+    "firebase_url": "https://smokequit-b0f8f-default-rtdb.firebaseio.com",
+    "project_id": "smokequit-b0f8f",
+    "storage_bucket": "smokequit-b0f8f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:875995118497:android:2d954cc4bba873f41929e0",
+        "android_client_info": {
+          "package_name": "com.example.smoke_quit"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3J8FhS_DYgpSJgmoDi-ddhPnqt3qRo7o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
