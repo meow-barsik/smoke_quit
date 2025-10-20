@@ -1,12 +1,12 @@
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'backend.dart';
 import 'package:firebase_core/firebase_core.dart';
 
-Future<void> main() async {
+void main() async{
   runApp(const SmokeQuit());
-  var reg = RegService();
-  reg.registration('11111', '23132', 'maomamo', true);
-  print('lfdsfsd');
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
 }
 
 class SmokeQuit extends StatelessWidget {
@@ -51,13 +51,11 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _pageController = PageController();
 
-    // Показываем диалог после инициализации с задержкой
+    // Показываем диалог после инициализации
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          AuthReg.show(context);
-        }
-      });
+      if (mounted) {
+        AuthReg.show(context);
+      }
     });
   }
 
@@ -87,7 +85,7 @@ class _MainScreenState extends State<MainScreen> {
       body: PageView(
         controller: _pageController,
         onPageChanged: _onPageChanged,
-        physics: const ClampingScrollPhysics(), // Более плавная прокрутка
+        physics: const ClampingScrollPhysics(),
         children: _screens,
       ),
       bottomNavigationBar: _bottomNav(),
@@ -140,6 +138,13 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _daysWithoutSmoking = 0;
   double _moneySaved = 0.0;
+
+  void _resetProgress() {
+    setState(() {
+      _daysWithoutSmoking = 0;
+      _moneySaved = 0.0;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -201,9 +206,7 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () {
-                  // TODO: Добавить логику сброса счетчика
-                },
+                onPressed: _resetProgress,
                 child: const Text('Сбросить прогресс'),
               ),
             ],
@@ -217,15 +220,14 @@ class _HomePageState extends State<HomePage> {
 class AuthReg extends StatefulWidget {
   const AuthReg({super.key});
 
-  static Future<void> show(BuildContext context) {
-    return showDialog(
+  static void show(BuildContext context) {
+    showDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black54,
       builder: (context) => const AuthReg(),
     );
   }
-
   @override
   State<AuthReg> createState() => _AuthState();
 }
@@ -252,37 +254,46 @@ class _AuthState extends State<AuthReg> {
       _showErrorSnackBar('Заполните все поля');
       return;
     }
-
     setState(() {
       _isLoading = true;
     });
 
-    try {
-      if (_isLogin) {
-        // TODO: Реализовать логику входа
-        debugPrint('Вход: $email');
-      } else {
-        // TODO: Реализовать логику регистрации
-        debugPrint('Регистрация: $email');
+    if (_isLogin) {
+      final AuthService auth = await AuthService.createAuthService(email);
+      User? user = auth.getUserInfo;
+      print(user?.getPasswd);
+      if (user != null) {
+        if (password == user.getPasswd) {
+          Navigator.of(context).pop();
+        }
+        else {
+          _showErrorSnackBar("Неверный пароль");
+        }
       }
-
-      // Имитация задержки сети
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        _showErrorSnackBar('Ошибка: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      else {
+        _showErrorSnackBar("Пользователя не существует");
       }
     }
+    else {
+          User? user = await AuthService.searchUser(
+          FirebaseDatabase.instance.refFromURL
+            ('https://smokequit-b0f8f-default-rtdb.firebaseio.com/'), email);
+      if (user == null) {
+        final RegService reg = await RegService.createRegService(email, password);
+        user = reg.user;
+        print(user.getMap());
+        setState(() {
+          Navigator.of(context).pop();
+        });
+      }
+      else {
+        _showErrorSnackBar("Пользователь существует");
+      }
+
+    }
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   void _showErrorSnackBar(String message) {
@@ -310,11 +321,13 @@ class _AuthState extends State<AuthReg> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _isLogin ? "Вход" : "Регистрация",
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+            Flexible( child:
+              Text(
+                _isLogin ? "Вход" : "Регистрация",
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -357,7 +370,9 @@ class _AuthState extends State<AuthReg> {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                      : Text(_isLogin ? "Войти" : "Зарегистрироваться"),
+                      : Flexible( child:
+                        Text(_isLogin ? "Войти" : "Продолжить"),
+                  )
                 ),
               ],
             )
@@ -368,7 +383,6 @@ class _AuthState extends State<AuthReg> {
   }
 }
 
-// Заглушка для остальных экранов
 class PlaceholderWidget extends StatelessWidget {
   final String title;
 
