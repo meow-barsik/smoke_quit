@@ -1,3 +1,5 @@
+import 'dart:ffi';
+
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'backend.dart';
@@ -51,10 +53,11 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _pageController = PageController();
 
-    // Показываем диалог после инициализации
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        AuthReg.show(context);
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (context) => OnBoardingWindow()));
+        //AuthReg.show(context);
       }
     });
   }
@@ -382,6 +385,184 @@ class _AuthState extends State<AuthReg> {
     );
   }
 }
+
+class OnBoardingWindow extends StatefulWidget {
+  const OnBoardingWindow({super.key});
+
+  @override
+  State<StatefulWidget> createState() => OnBoardingWindowState();
+}
+
+class OnBoardingWindowState extends State<OnBoardingWindow> {
+  String? _selectedValue;
+  final List<String> _types = ["Обычные сигареты", "Электронные сигареты"];
+  String _cigType = "thin";
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Форма курящего", textAlign: TextAlign.center),
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Text(
+              "Тип курения",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            _smokingType(),
+            SizedBox(height: 20),
+            ..._selectContent(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _smokingType() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: DropdownButton<String>(
+        value: _selectedValue,
+        isExpanded: true,
+        hint: Text("Выберите тип"),
+        items: _types.map((type) {
+          return DropdownMenuItem<String>(
+            value: type,
+            child: Text(type),
+          );
+        }).toList(),
+        onChanged: (String? newVal) {
+          setState(() {
+            _selectedValue = newVal;
+          });
+        },
+        underline: SizedBox(), // Убираем стандартную линию
+      ),
+    );
+  }
+
+  List<Widget> _selectContent() {
+    if (_selectedValue == null) {
+      return [
+        Text(
+          "Выберите тип курения",
+          style: TextStyle(
+            color: Colors.grey,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ];
+    }
+    switch (_selectedValue) {
+      case "Обычные сигареты":
+        return _cigContent();
+      case "Электронные сигареты":
+        return _electroContent();
+      default:
+        return [];
+    }
+  }
+
+  List<Widget> _cigContent() {
+    return [
+      SizedBox(height: 16),
+      TextField(
+        decoration: InputDecoration(
+          labelText: "Сигарет в день",
+          hintText: "Например: 20",
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+      ),
+      SizedBox(height: 12),
+      TextField(
+        decoration: InputDecoration(
+          labelText: "Стоимость пачки",
+          hintText: "Например: 200",
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+      ),
+      SizedBox(height: 16),
+      Text(
+        "Тип сигарет:",
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      ),
+      SizedBox(height: 8),
+      // Исправленные Radio кнопки
+      Row(
+        children: <Widget>[
+          Expanded(
+            child: RadioListTile<String>(
+              title: Text("Тонкие"),
+              value: "thin",
+              groupValue: _cigType,
+              onChanged: (String? value) {
+                setState(() {
+                  _cigType = value!;
+                });
+              },
+            ),
+          ),
+          Expanded(
+            child: RadioListTile<String>(
+              title: Text("Толстые"),
+              value: "thick",
+              groupValue: _cigType,
+              onChanged: (String? value) {
+                setState(() {
+                  _cigType = value!;
+                });
+              },
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _electroContent() {
+    return [
+      SizedBox(height: 16),
+      TextField(
+        decoration: InputDecoration(
+          labelText: "Затяжек в день",
+          hintText: "Например: 200",
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+      ),
+      SizedBox(height: 12),
+      TextField(
+        decoration: InputDecoration(
+          labelText: "Стоимость жидкости",
+          hintText: "Например: 500",
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+      ),
+      SizedBox(height: 12),
+      TextField(
+        decoration: InputDecoration(
+          labelText: "Мл жидкости в день",
+          hintText: "Например: 5",
+          border: OutlineInputBorder(),
+        ),
+        keyboardType: TextInputType.number,
+      ),
+    ];
+  }
+}
+
+
 
 class PlaceholderWidget extends StatelessWidget {
   final String title;
