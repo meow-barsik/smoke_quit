@@ -1,14 +1,15 @@
-import 'dart:ffi';
-
+import 'dart:core';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Size;
+import 'package:flutter/services.dart' hide Size;
 import 'backend.dart';
+import 'dataModels.dart';
 import 'package:firebase_core/firebase_core.dart';
 
-void main() async{
-  runApp(const SmokeQuit());
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  runApp(const SmokeQuit());
 }
 
 class SmokeQuit extends StatelessWidget {
@@ -40,6 +41,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   late PageController _pageController;
+  User? _currentUser;
 
   final List<Widget> _screens = [
     const HomePage(),
@@ -55,9 +57,21 @@ class _MainScreenState extends State<MainScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        _showAuthDialog();
+      }
+    });
+  }
+
+  void _showAuthDialog() {
+    AuthReg.show(context, onUserAuthenticated: (user) {
+      setState(() {
+        _currentUser = user;
+      });
+
+      if (!user.getOnboarded) {
         Navigator.of(context).push(
-            MaterialPageRoute(builder: (context) => OnBoardingWindow()));
-        //AuthReg.show(context);
+            MaterialPageRoute(builder: (context) => OnBoardingWindow(user: user))
+        );
       }
     });
   }
@@ -142,6 +156,7 @@ class _HomePageState extends State<HomePage> {
   int _daysWithoutSmoking = 0;
   double _moneySaved = 0.0;
 
+
   void _resetProgress() {
     setState(() {
       _daysWithoutSmoking = 0;
@@ -221,14 +236,16 @@ class _HomePageState extends State<HomePage> {
 }
 
 class AuthReg extends StatefulWidget {
-  const AuthReg({super.key});
+  final Function(User)? onUserAuthenticated;
 
-  static void show(BuildContext context) {
+  const AuthReg({super.key, this.onUserAuthenticated});
+
+  static void show(BuildContext context, {Function(User)? onUserAuthenticated}) {
     showDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black54,
-      builder: (context) => const AuthReg(),
+      builder: (context) => AuthReg(onUserAuthenticated: onUserAuthenticated),
     );
   }
   @override
@@ -257,46 +274,57 @@ class _AuthState extends State<AuthReg> {
       _showErrorSnackBar('Заполните все поля');
       return;
     }
+
     setState(() {
       _isLoading = true;
     });
 
-    if (_isLogin) {
-      final AuthService auth = await AuthService.createAuthService(email);
-      User? user = auth.getUserInfo;
-      print(user?.getPasswd);
-      if (user != null) {
-        if (password == user.getPasswd) {
-          Navigator.of(context).pop();
-        }
-        else {
-          _showErrorSnackBar("Неверный пароль");
-        }
-      }
-      else {
-        _showErrorSnackBar("Пользователя не существует");
-      }
-    }
-    else {
-          User? user = await AuthService.searchUser(
-          FirebaseDatabase.instance.refFromURL
-            ('https://smokequit-b0f8f-default-rtdb.firebaseio.com/'), email);
-      if (user == null) {
-        final RegService reg = await RegService.createRegService(email, password);
-        user = reg.user;
-        print(user.getMap());
-        setState(() {
-          Navigator.of(context).pop();
-        });
-      }
-      else {
-        _showErrorSnackBar("Пользователь существует");
-      }
+    try {
+      if (_isLogin) {
+        final AuthService auth = await AuthService.createAuthService(email);
+        User? user = auth.getUserInfo;
 
+        if (user != null) {
+          if (password == user.getPasswd) {
+            Navigator.of(context).pop();
+            if (user.getOnboarded) {
+              final onboardingService = await OnBoardingService.createOnboardingService(user);
+              await onboardingService.onboardingAuth();
+            }
+
+            if (widget.onUserAuthenticated != null) {
+              widget.onUserAuthenticated!(user);
+            }
+          } else {
+            _showErrorSnackBar("Неверный пароль");
+          }
+        } else {
+          _showErrorSnackBar("Пользователя не существует");
+        }
+      } else {
+        User? existingUser = await AuthService.searchUser(
+            FirebaseDatabase.instance.refFromURL(
+                'https://smokequit-b0f8f-default-rtdb.firebaseio.com/'), email);
+
+        if (existingUser == null) {
+          final RegService reg = await RegService.createRegService(email, password);
+          final user = reg.user;
+
+          if (widget.onUserAuthenticated != null) {
+            widget.onUserAuthenticated!(user);
+            Navigator.of(context).pop();
+          }
+        } else {
+          _showErrorSnackBar("Пользователь существует");
+        }
+      }
+    } catch (e) {
+      _showErrorSnackBar("Произошла ошибка: $e");
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
-    setState(() {
-      _isLoading = false;
-    });
   }
 
   void _showErrorSnackBar(String message) {
@@ -324,13 +352,11 @@ class _AuthState extends State<AuthReg> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible( child:
-              Text(
-                _isLogin ? "Вход" : "Регистрация",
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
+            Text(
+              _isLogin ? "Вход" : "Регистрация",
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 24),
@@ -373,9 +399,7 @@ class _AuthState extends State<AuthReg> {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                      : Flexible( child:
-                        Text(_isLogin ? "Войти" : "Продолжить"),
-                  )
+                      : Text(_isLogin ? "Войти" : "Продолжить"),
                 ),
               ],
             )
@@ -387,7 +411,9 @@ class _AuthState extends State<AuthReg> {
 }
 
 class OnBoardingWindow extends StatefulWidget {
-  const OnBoardingWindow({super.key});
+  final User user;
+
+  const OnBoardingWindow({super.key, required this.user});
 
   @override
   State<StatefulWidget> createState() => OnBoardingWindowState();
@@ -397,34 +423,358 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
   String? _selectedValue;
   final List<String> _types = ["Обычные сигареты", "Электронные сигареты"];
   String _cigType = "thin";
+  final TextEditingController _dateController = TextEditingController();
+
+  final TextEditingController _yearsController = TextEditingController();
+  final TextEditingController _monthsController = TextEditingController();
+  final TextEditingController _attemptsController = TextEditingController();
+  final TextEditingController _cigPerDayController = TextEditingController();
+  final TextEditingController _packPriceController = TextEditingController();
+  final TextEditingController _powerController = TextEditingController();
+  final TextEditingController _liquidPriceController = TextEditingController();
+  final TextEditingController _liquidDaysController = TextEditingController();
+
+  final _formKey = GlobalKey<FormState>();
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Форма курящего", textAlign: TextAlign.center),
+        title: const Text("Форма курящего", textAlign: TextAlign.center),
       ),
       body: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text(
-              "Тип курения",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 8),
-            _smokingType(),
-            SizedBox(height: 20),
-            ..._selectContent(),
-          ],
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              const Text("Стаж курения"),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _yearsController,
+                      decoration: const InputDecoration(labelText: "Лет"),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Введите количество лет';
+                        }
+                        final years = int.tryParse(value);
+                        if (years == null) return 'Только цифры';
+                        if (years < 0) return 'Не может быть отрицательным';
+                        if (years > 100) return 'Слишком большое значение';
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _monthsController,
+                      decoration: const InputDecoration(labelText: "Месяцев"),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Введите количество месяцев';
+                        }
+                        final months = int.tryParse(value);
+                        if (months == null) return 'Только цифры';
+                        if (months < 0) return 'Не может быть отрицательным';
+                        if (months >= 12) return 'Должно быть меньше 12';
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _attemptsController,
+                decoration: const InputDecoration(
+                    labelText: "Кол-во попыток бросания"
+                ),
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Введите количество попыток';
+                  }
+                  final attempts = int.tryParse(value);
+                  if (attempts == null) return 'Только цифры';
+                  if (attempts < 0) return 'Не может быть отрицательным';
+                  if (attempts > 100) return 'Слишком большое значение';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _dateController,
+                decoration: const InputDecoration(
+                  labelText: "Дата последней попытки",
+                  hintText: "дд.мм.гггг",
+                  helperText: "Например: 15.05.2023",
+                ),
+                keyboardType: TextInputType.datetime,
+                inputFormatters: [
+                  LengthLimitingTextInputFormatter(10),
+                ],
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Введите дату';
+                  }
+                  final regex = RegExp(r'^\d{2}\.\d{2}\.\d{4}$');
+                  if (!regex.hasMatch(value)) {
+                    return 'Формат: дд.мм.гггг';
+                  }
+                  if (!_isValidDate(value)) {
+                    return 'Введите корректную дату';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                "Тип курения",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              _smokingType(),
+              const SizedBox(height: 16),
+              ..._selectContent(),
+              const SizedBox(height: 24),
+              _isLoading
+                  ? const CircularProgressIndicator()
+                  : ElevatedButton(
+                onPressed: _validateAndSubmit,
+                child: const Text('Сохранить данные'),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _validateAndSubmit() async {
+    FocusScope.of(context).unfocus();
+
+    if (_selectedValue == null) {
+      _showError('Пожалуйста, выберите тип курения');
+      return;
+    }
+
+    if (!_formKey.currentState!.validate()) {
+      _showError('Исправьте ошибки в форме');
+      return;
+    }
+
+    if (!_validateSelectedTypeContent()) {
+      return;
+    }
+
+    if (!_validateSmokingExperience()) {
+      return;
+    }
+
+    await _processFormData();
+  }
+
+  bool _validateSelectedTypeContent() {
+    if (_selectedValue == "Обычные сигареты") {
+      final cigPerDay = _cigPerDayController.text;
+      final packPrice = _packPriceController.text;
+
+      if (cigPerDay.isEmpty) {
+        _showError('Введите количество сигарет в день');
+        return false;
+      }
+      if (packPrice.isEmpty) {
+        _showError('Введите стоимость пачки');
+        return false;
+      }
+
+      final cigPerDayInt = int.tryParse(cigPerDay);
+      final packPriceInt = int.tryParse(packPrice);
+
+      if (cigPerDayInt == null || cigPerDayInt <= 0) {
+        _showError('Количество сигарет должно быть положительным числом');
+        return false;
+      }
+      if (packPriceInt == null || packPriceInt <= 0) {
+        _showError('Стоимость пачки должна быть положительным числом');
+        return false;
+      }
+
+    } else if (_selectedValue == "Электронные сигареты") {
+      final power = _powerController.text;
+      final liquidPrice = _liquidPriceController.text;
+      final liquidDays = _liquidDaysController.text;
+
+      if (power.isEmpty) {
+        _showError('Введите силу затяжки');
+        return false;
+      }
+      if (liquidPrice.isEmpty) {
+        _showError('Введите стоимость банки жидкости');
+        return false;
+      }
+      if (liquidDays.isEmpty) {
+        _showError('Введите количество дней на банку жидкости');
+        return false;
+      }
+
+      final powerInt = int.tryParse(power);
+      final liquidPriceInt = int.tryParse(liquidPrice);
+      final liquidDaysInt = int.tryParse(liquidDays);
+
+      if (powerInt == null || powerInt <= 0) {
+        _showError('Сила затяжки должна быть положительным числом');
+        return false;
+      }
+      if (liquidPriceInt == null || liquidPriceInt <= 0) {
+        _showError('Стоимость жидкости должна быть положительным числом');
+        return false;
+      }
+      if (liquidDaysInt == null || liquidDaysInt <= 0) {
+        _showError('Количество дней должно быть положительным числом');
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool _validateSmokingExperience() {
+    final years = int.tryParse(_yearsController.text) ?? 0;
+    final months = int.tryParse(_monthsController.text) ?? 0;
+
+    if (years == 0 && months == 0) {
+      _showError('Стаж курения не может быть нулевым');
+      return false;
+    }
+
+    if (years > 80) {
+      _showError('Проверьте правильность введенного стажа');
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _processFormData() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final smokingYears = int.tryParse(_yearsController.text);
+      final smokingMonth = int.parse(_monthsController.text);
+      final attempts = int.parse(_attemptsController.text);
+
+      // Парсим дату
+      final dateParts = _dateController.text.split('.');
+      final lastDate = DateTime(
+        int.parse(dateParts[2]),
+        int.parse(dateParts[1]),
+        int.parse(dateParts[0]),
+      );
+
+      final isAlternative = _selectedValue == "Электронные сигареты";
+
+      widget.user.isAlternative = isAlternative;
+
+      SmokingStats stats;
+
+      if (isAlternative) {
+        stats = VapeStats(
+          puffPower: int.parse(_powerController.text),
+          bottlePrice: int.parse(_liquidPriceController.text),
+          daysOnBottle: int.parse(_liquidDaysController.text),
+          puffPerDay: 0, // Можно добавить поле для этого
+        );
+      } else {
+        stats = CigStats(
+          cigType: _cigType,
+          cigPerDay: int.parse(_cigPerDayController.text),
+          packPrice: int.parse(_packPriceController.text),
+        );
+      }
+
+      final onboardingService = await OnBoardingService.createOnboardingService(widget.user);
+      await onboardingService.onboardingRegistration(
+        smokingYears: smokingYears,
+        smokingMonth: smokingMonth,
+        attempts: attempts,
+        lastDate: lastDate,
+        type: _selectedValue!,
+        stats: stats,
+      );
+
+      _showSuccess('Данные успешно сохранены!');
+
+      // Возвращаемся на главный экран
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } catch (e) {
+      _showError('Ошибка сохранения данных: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  bool _isValidDate(String dateString) {
+    try {
+      final parts = dateString.split('.');
+      final day = int.parse(parts[0]);
+      final month = int.parse(parts[1]);
+      final year = int.parse(parts[2]);
+
+      if (year < 2000 || year > DateTime.now().year) return false;
+      if (month < 1 || month > 12) return false;
+      if (day < 1 || day > 31) return false;
+
+      final date = DateTime(year, month, day);
+      if (date.day != day || date.month != month) return false;
+
+      if (date.isAfter(DateTime.now())) return false;
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   Widget _smokingType() {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         border: Border.all(color: Colors.grey.shade300),
         borderRadius: BorderRadius.circular(8),
@@ -432,7 +782,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
       child: DropdownButton<String>(
         value: _selectedValue,
         isExpanded: true,
-        hint: Text("Выберите тип"),
+        hint: const Text("Выберите тип"),
         items: _types.map((type) {
           return DropdownMenuItem<String>(
             value: type,
@@ -444,7 +794,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
             _selectedValue = newVal;
           });
         },
-        underline: SizedBox(), // Убираем стандартную линию
+        underline: const SizedBox(),
       ),
     );
   }
@@ -473,36 +823,39 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
 
   List<Widget> _cigContent() {
     return [
-      SizedBox(height: 16),
-      TextField(
-        decoration: InputDecoration(
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _cigPerDayController,
+        decoration: const InputDecoration(
           labelText: "Сигарет в день",
           hintText: "Например: 20",
           border: OutlineInputBorder(),
         ),
         keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       ),
-      SizedBox(height: 12),
-      TextField(
-        decoration: InputDecoration(
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _packPriceController,
+        decoration: const InputDecoration(
           labelText: "Стоимость пачки",
           hintText: "Например: 200",
           border: OutlineInputBorder(),
         ),
         keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       ),
-      SizedBox(height: 16),
-      Text(
+      const SizedBox(height: 16),
+      const Text(
         "Тип сигарет:",
         style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
       ),
-      SizedBox(height: 8),
-      // Исправленные Radio кнопки
+      const SizedBox(height: 8),
       Row(
         children: <Widget>[
           Expanded(
             child: RadioListTile<String>(
-              title: Text("Тонкие"),
+              title: const Text("Тонкие"),
               value: "thin",
               groupValue: _cigType,
               onChanged: (String? value) {
@@ -514,7 +867,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
           ),
           Expanded(
             child: RadioListTile<String>(
-              title: Text("Толстые"),
+              title: const Text("Толстые"),
               value: "thick",
               groupValue: _cigType,
               onChanged: (String? value) {
@@ -531,38 +884,56 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
 
   List<Widget> _electroContent() {
     return [
-      SizedBox(height: 16),
-      TextField(
-        decoration: InputDecoration(
-          labelText: "Затяжек в день",
-          hintText: "Например: 200",
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _powerController,
+        decoration: const InputDecoration(
+          labelText: "Сила затяжки в ваттах",
+          hintText: "Например: 15",
           border: OutlineInputBorder(),
         ),
         keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       ),
-      SizedBox(height: 12),
-      TextField(
-        decoration: InputDecoration(
-          labelText: "Стоимость жидкости",
-          hintText: "Например: 500",
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _liquidPriceController,
+        decoration: const InputDecoration(
+          labelText: "Средняя стоимость банки жидкости",
+          hintText: "Например: 400",
           border: OutlineInputBorder(),
         ),
         keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       ),
-      SizedBox(height: 12),
-      TextField(
-        decoration: InputDecoration(
-          labelText: "Мл жидкости в день",
-          hintText: "Например: 5",
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _liquidDaysController,
+        decoration: const InputDecoration(
+          labelText: "Кол-во дней на банку жидкости 30мл",
+          hintText: "Например: 15",
           border: OutlineInputBorder(),
         ),
         keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       ),
     ];
   }
+
+  @override
+  void dispose() {
+    _yearsController.dispose();
+    _monthsController.dispose();
+    _attemptsController.dispose();
+    _dateController.dispose();
+    _cigPerDayController.dispose();
+    _packPriceController.dispose();
+    _powerController.dispose();
+    _liquidPriceController.dispose();
+    _liquidDaysController.dispose();
+    super.dispose();
+  }
 }
-
-
 
 class PlaceholderWidget extends StatelessWidget {
   final String title;
