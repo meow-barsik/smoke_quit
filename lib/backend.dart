@@ -1,7 +1,4 @@
-// backend.dart
 import 'dart:core';
-import 'dart:ffi';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'dataModels.dart';
 
@@ -11,11 +8,14 @@ class RegService {
 
   RegService._({required this.user, required this.databaseReference});
 
-  static Future<RegService> createRegService(String email, String password) async {
-    final DatabaseReference _database = FirebaseDatabase.instance.refFromURL(
-        'https://smokequit-b0f8f-default-rtdb.firebaseio.com'
+  static Future<RegService> createRegService(
+    String email,
+    String password,
+  ) async {
+    final DatabaseReference database = FirebaseDatabase.instance.refFromURL(
+      'https://smokequit-b0f8f-default-rtdb.firebaseio.com',
     );
-    final DatabaseReference ref = _database.child('users').push();
+    final DatabaseReference ref = database.child('users').push();
     final String? id = ref.key;
 
     if (id == null) {
@@ -23,17 +23,17 @@ class RegService {
     }
 
     final User user = User(id, email, password, false, false);
-    await _addUserData(_database, user, id, email);
+    await _addUserData(database, user, id, email);
 
-    return RegService._(user: user, databaseReference: _database);
+    return RegService._(user: user, databaseReference: database);
   }
 
   static Future<void> _addUserData(
-      DatabaseReference ref,
-      User user,
-      String key,
-      String mail
-      ) async {
+    DatabaseReference ref,
+    User user,
+    String key,
+    String mail,
+  ) async {
     try {
       await ref.child('users').child(key).set(user.getMap());
       await ref.child('usersIndex').child(key).set(mail);
@@ -52,17 +52,23 @@ class AuthService {
 
   static Future<AuthService> createAuthService(String email) async {
     final database = FirebaseDatabase.instance.refFromURL(
-        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/'
+      'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
     );
     final User? user = await _searchUser(database, email);
     return AuthService._(user);
   }
 
-  static Future<User?> searchUser(DatabaseReference database, String mail) async {
+  static Future<User?> searchUser(
+    DatabaseReference database,
+    String mail,
+  ) async {
     return await _searchUser(database, mail);
   }
 
-  static Future<User?> _searchUser(DatabaseReference database, String mail) async {
+  static Future<User?> _searchUser(
+    DatabaseReference database,
+    String mail,
+  ) async {
     try {
       final DataSnapshot snapshot = await database.child('usersIndex').get();
 
@@ -70,7 +76,8 @@ class AuthService {
         return null;
       }
 
-      final Map<dynamic, dynamic> data = snapshot.value as Map<dynamic, dynamic>;
+      final Map<dynamic, dynamic> data =
+          snapshot.value as Map<dynamic, dynamic>;
 
       for (dynamic key in data.keys) {
         if (mail == data[key]) {
@@ -86,9 +93,15 @@ class AuthService {
     }
   }
 
-  static Future<User> _getUserData(String key, DatabaseReference database) async {
+  static Future<User> _getUserData(
+    String key,
+    DatabaseReference database,
+  ) async {
     try {
-      final DataSnapshot snapshot = await database.child('users').child(key).get();
+      final DataSnapshot snapshot = await database
+          .child('users')
+          .child(key)
+          .get();
 
       if (!snapshot.exists) {
         throw Exception('User data not found');
@@ -113,7 +126,7 @@ class OnBoardingService {
 
   static Future<OnBoardingService> createOnboardingService(User user) async {
     final database = FirebaseDatabase.instance.refFromURL(
-        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/'
+      'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
     );
     return OnBoardingService(database: database, user: user);
   }
@@ -160,14 +173,20 @@ class OnBoardingService {
 
   Future<void> onboardingAuth() async {
     try {
-      final DataSnapshot snap = await database.child('stats').child(user.userId).get();
+      final DataSnapshot snap = await database
+          .child('stats')
+          .child(user.userId)
+          .get();
 
       if (!snap.exists) {
         throw Exception('No stats found for user');
       }
 
       final data = snap.value as Map<dynamic, dynamic>;
-      final userStats = UserStats.fromJson(Map<String, dynamic>.from(data), user);
+      final userStats = UserStats.fromJson(
+        Map<String, dynamic>.from(data),
+        user,
+      );
       user.stats = userStats;
 
       print('Onboarding data loaded successfully for user: ${user.userId}');
@@ -176,8 +195,17 @@ class OnBoardingService {
       rethrow;
     }
   }
-}
 
+  // Метод для загрузки статистики отказа при онбординге
+  Future<void> loadQuitStats() async {
+    try {
+      final quitUser = await StartQuit.getCurrentQuitStats(user);
+      user.quitStat = quitUser;
+    } catch (e) {
+      print('Error loading quit stats: $e');
+    }
+  }
+}
 
 class StartQuit {
   final User user;
@@ -185,47 +213,98 @@ class StartQuit {
 
   StartQuit(this.user, this.userQuit);
 
-  static Future<QuitUser?> searchUserQuit(database, User user) async {
-    final database = FirebaseDatabase.instance.refFromURL(
-        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/');
-    final DataSnapshot userInfo = await database.child('quitIndex').get();
-    final Map<String, dynamic> usersMap = userInfo.value as Map<String, String>;
-    late QuitUser ?userClass;
+  static Future<QuitUser?> searchUserQuit(
+    DatabaseReference database,
+    User user,
+  ) async {
+    try {
+      final DataSnapshot userInfo = await database.child('quitIndex').get();
 
-    for (var entry in usersMap.entries) {
-      if (entry.value == user.userId) {
-        final DataSnapshot foundedUser = await database.child('quitStats').child(entry.key).get();
-        return QuitUser.byList(foundedUser.value as Map<String, dynamic>, user);
-      }
-      else {
+      if (!userInfo.exists) {
         return null;
       }
-    }
 
+      final Map<dynamic, dynamic> usersMap =
+          userInfo.value as Map<dynamic, dynamic>;
+
+      for (var entry in usersMap.entries) {
+        if (entry.value == user.userId) {
+          final DataSnapshot foundedUser = await database
+              .child('quitStats')
+              .child(entry.key.toString())
+              .get();
+
+          if (foundedUser.exists) {
+            final Map<String, dynamic> userData = Map<String, dynamic>.from(
+              foundedUser.value as Map<dynamic, dynamic>,
+            );
+            return QuitUser.byList(userData, user);
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error searching user quit: $e');
+      return null;
+    }
   }
 
-  static Future<QuitUser> createUserQuit(DatabaseReference database, user) async {
+  static Future<QuitUser> createUserQuit(
+    DatabaseReference database,
+    User user,
+  ) async {
     String? key = database.child('quitStats').push().key;
-    QuitUser quitStats = QuitUser.newUser(user, key);
+    QuitUser quitStats = QuitUser.newUser(user, key!);
 
-    await database.child('quitStats').child(key!).set(quitStats.getMap());
-    await database.child('quitIndex').set(quitStats.getIndex());
+    await database.child('quitStats').child(key).set(quitStats.getMap());
+    await database.child('quitIndex').child(key).set(user.userId);
 
     return quitStats;
   }
 
-  static Future<StartQuit> startQuit(user) async {
+  static Future<StartQuit> startQuit(User user) async {
     final database = FirebaseDatabase.instance.refFromURL(
-        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/'
+      'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
     );
-    QuitUser? quitStats = await StartQuit.searchUserQuit(database, user);
+
+    QuitUser? quitStats = await searchUserQuit(database, user);
     if (quitStats != null) {
       return StartQuit(user, quitStats);
-    }
-    else {
+    } else {
       quitStats = await createUserQuit(database, user);
       return StartQuit(user, quitStats);
     }
   }
 
+  // Метод для получения актуальной статистики отказа
+  static Future<QuitUser?> getCurrentQuitStats(User user) async {
+    try {
+      final database = FirebaseDatabase.instance.refFromURL(
+        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
+      );
+
+      return await searchUserQuit(database, user);
+    } catch (e) {
+      print('Error getting quit stats: $e');
+      return null;
+    }
+  }
+
+  // Метод для обновления статистики отказа
+  static Future<void> updateQuitStats(User user, QuitUser quitUser) async {
+    try {
+      final database = FirebaseDatabase.instance.refFromURL(
+        'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
+      );
+
+      await database.child('quitStats').child(quitUser.quitId).update({
+        'daysOut': quitUser.daysWithoutSmoking,
+        'moneySaved': quitUser.calculateMoneySaved(user.stats),
+        'lastUpdate': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      print('Error updating quit stats: $e');
+      rethrow;
+    }
+  }
 }

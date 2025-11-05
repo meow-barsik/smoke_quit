@@ -1,4 +1,5 @@
 import 'dart:core';
+import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart' hide Size;
 import 'package:flutter/services.dart' hide Size;
@@ -40,20 +41,15 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
-  late PageController _pageController;
   User? _currentUser;
+  bool _isLoading = true;
 
-  final List<Widget> _screens = [
-    const HomePage(),
-    const PlaceholderWidget(title: 'Статистика'),
-    const PlaceholderWidget(title: 'Достижения'),
-    const PlaceholderWidget(title: 'Профиль'),
-  ];
+  final List<Widget> _screens = [];
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController();
+    _initializeScreens();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -62,49 +58,84 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  void _showAuthDialog() {
-    AuthReg.show(context, onUserAuthenticated: (user) {
-      setState(() {
-        _currentUser = user;
-      });
+  void _initializeScreens() {
+    _screens.addAll([
+      HomePage(
+        key: const Key('home_page'),
+        user: _currentUser,
+        onUserUpdated: (user) {
+          setState(() {
+            _currentUser = user;
+          });
+          _updateScreens();
+        },
+      ),
+      const PlaceholderWidget(title: 'Статистика'),
+      const PlaceholderWidget(title: 'Достижения'),
+      ProfilePage(key: const Key('profile_page'), user: _currentUser),
+    ]);
+  }
 
-      if (!user.getOnboarded) {
-        Navigator.of(context).push(
-            MaterialPageRoute(builder: (context) => OnBoardingWindow(user: user))
-        );
-      }
+  void _updateScreens() {
+    setState(() {
+      _screens.clear();
+      _screens.addAll([
+        HomePage(
+          key: const Key('home_page'),
+          user: _currentUser,
+          onUserUpdated: (user) {
+            setState(() {
+              _currentUser = user;
+            });
+            _updateScreens();
+          },
+        ),
+        const PlaceholderWidget(title: 'Статистика'),
+        const PlaceholderWidget(title: 'Достижения'),
+        ProfilePage(key: const Key('profile_page'), user: _currentUser),
+      ]);
     });
   }
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
+  void _showAuthDialog() {
+    AuthReg.show(
+      context,
+      onUserAuthenticated: (user) {
+        setState(() {
+          _currentUser = user;
+          _isLoading = false;
+        });
+        _updateScreens();
+
+        if (!user.getOnboarded) {
+          Navigator.of(context)
+              .push(
+                MaterialPageRoute(
+                  builder: (context) => OnBoardingWindow(user: user),
+                ),
+              )
+              .then((_) {
+                // После онбординга обновляем данные
+                setState(() {
+                  _currentUser = user;
+                });
+                _updateScreens();
+              });
+        }
+      },
+    );
   }
 
-  void _onPageChanged(int index) {
+  void _onTabSelected(int index) {
     setState(() {
       _currentIndex = index;
     });
   }
 
-  void _onTabSelected(int index) {
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: _onPageChanged,
-        physics: const ClampingScrollPhysics(),
-        children: _screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _screens),
       bottomNavigationBar: _bottomNav(),
     );
   }
@@ -146,91 +177,523 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final User? user;
+  final Function(User)? onUserUpdated;
+
+  const HomePage({super.key, this.user, this.onUserUpdated});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  int _daysWithoutSmoking = 0;
-  double _moneySaved = 0.0;
+  User? _currentUser;
+  QuitUser? _quitUser;
+  bool _isLoading = true;
+  Timer? _updateTimer;
 
+  @override
+  void initState() {
+    super.initState();
+    _initializeData();
+    _startAutoUpdate();
+  }
 
-  void _resetProgress() {
-    setState(() {
-      _daysWithoutSmoking = 0;
-      _moneySaved = 0.0;
+  void _initializeData() {
+    _currentUser = widget.user;
+    _quitUser = _currentUser?.quitStat;
+    _isLoading = _currentUser == null;
+
+    if (_currentUser != null) {
+      _loadQuitData();
+    } else {
+      _isLoading = false;
+    }
+  }
+
+  @override
+  void didUpdateWidget(HomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.user != oldWidget.user) {
+      _initializeData();
+    }
+  }
+
+  // Автообновление статистики каждую минуту
+  void _startAutoUpdate() {
+    _updateTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (_quitUser != null && mounted) {
+        setState(() {});
+      }
     });
+  }
+
+  Future<void> _loadQuitData() async {
+    if (_currentUser == null) return;
+
+    try {
+      final quitUser = await StartQuit.getCurrentQuitStats(_currentUser!);
+      if (mounted) {
+        setState(() {
+          _quitUser = quitUser;
+          _currentUser?.quitStat = quitUser;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading quit data: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _startQuitSmoking() async {
+    if (_currentUser == null) {
+      _showError('Пользователь не авторизован');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final startQuit = await StartQuit.startQuit(_currentUser!);
+      setState(() {
+        _quitUser = startQuit.userQuit;
+        _currentUser?.quitStat = _quitUser;
+      });
+
+      // Обновляем пользователя в родительском виджете
+      if (widget.onUserUpdated != null) {
+        widget.onUserUpdated!(_currentUser!);
+      }
+
+      _showSuccess('Вы начали путь к отказу от курения! 💪');
+    } catch (e) {
+      _showError('Ошибка при начале отказа от курения: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateQuitStats() async {
+    if (_currentUser == null || _quitUser == null) return;
+
+    try {
+      await StartQuit.updateQuitStats(_currentUser!, _quitUser!);
+      _showSuccess('Статистика обновлена!');
+    } catch (e) {
+      print('Error updating quit stats: $e');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  // Расчет сэкономленных денег
+  double get _moneySaved {
+    if (_quitUser == null || _currentUser?.stats == null) return 0.0;
+    return _quitUser!.calculateMoneySaved(_currentUser!.stats);
+  }
+
+  // Получение дней без курения
+  int get _daysWithoutSmoking {
+    return _quitUser?.daysWithoutSmoking ?? 0;
+  }
+
+  // Получение улучшений здоровья
+  Map<String, String> get _healthImprovements {
+    return _quitUser?.getHealthImprovements() ?? {};
+  }
+
+  Widget _buildProgressCircle() {
+    final days = _daysWithoutSmoking;
+    final color = Theme.of(context).colorScheme.primaryContainer;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.5),
+            blurRadius: 10,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            days.toString(),
+            style: const TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+          Text(
+            'дней',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.white.withOpacity(0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMoneySavedCard() {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.savings, color: Colors.green, size: 24),
+                const SizedBox(width: 8),
+                Text(
+                  "₽${_moneySaved.toStringAsFixed(2)}",
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Сэкономлено средств",
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            if (_currentUser?.stats != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                "₽${(_currentUser!.stats!.getMonthlySavings()).toStringAsFixed(2)} в месяц",
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHealthImprovements() {
+    final improvements = _healthImprovements;
+
+    if (improvements.isEmpty) return const SizedBox();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.health_and_safety,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  "Улучшение здоровья",
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...improvements.entries
+                .map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.only(top: 6, right: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.green,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                entry.key,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              Text(
+                                entry.value,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStartButton() {
+    if (_quitUser != null && _quitUser!.isQuiting) {
+      return Column(
+        children: [
+          Card(
+            color: Colors.green.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  Icon(Icons.celebration, color: Colors.green, size: 40),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Вы в процессе отказа от курения!',
+                    style: TextStyle(
+                      color: Colors.green.shade800,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Начало: ${_quitUser!.quitStart.day}.${_quitUser!.quitStart.month}.${_quitUser!.quitStart.year}',
+                    style: TextStyle(color: Colors.green.shade600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_daysWithoutSmoking} дней без курения',
+                    style: TextStyle(
+                      color: Colors.green.shade600,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _updateQuitStats,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Обновить статистику'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade50,
+              foregroundColor: Colors.blue,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return ElevatedButton.icon(
+      onPressed: _startQuitSmoking,
+      icon: const Icon(Icons.smoke_free),
+      label: const Text('Начать отказ от курения'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('SmokeQuit'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         elevation: 0,
+        actions: [
+          if (_currentUser != null)
+            IconButton(
+              icon: const Icon(Icons.person),
+              onPressed: () {
+                // Переход в профиль
+              },
+            ),
+        ],
       ),
-      body: Center(
+      body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  _daysWithoutSmoking.toString(),
-                  style: const TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
+              _buildProgressCircle(),
               const SizedBox(height: 24),
               Text(
                 "Дней без курения",
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    children: [
-                      Text(
-                        "₽${_moneySaved.toStringAsFixed(2)}",
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        "Сэкономлено средств",
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _resetProgress,
-                child: const Text('Сбросить прогресс'),
-              ),
+              _buildMoneySavedCard(),
+              const SizedBox(height: 16),
+              _buildHealthImprovements(),
+              const SizedBox(height: 24),
+              _buildStartButton(),
+              if (_currentUser == null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'Войдите в аккаунт чтобы начать отсчет',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    super.dispose();
+  }
+}
+
+class ProfilePage extends StatelessWidget {
+  final User? user;
+
+  const ProfilePage({super.key, this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Профиль')),
+      body: user == null
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.person_outline, size: 64, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text(
+                    'Войдите в аккаунт',
+                    style: TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
+                ],
+              ),
+            )
+          : Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Профиль пользователя',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 16),
+                          ListTile(
+                            leading: const Icon(Icons.email),
+                            title: const Text('Email'),
+                            subtitle: Text(user!.mail),
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.smoking_rooms),
+                            title: const Text('Тип курения'),
+                            subtitle: Text(
+                              user!.isAlternative
+                                  ? 'Электронные сигареты'
+                                  : 'Обычные сигареты',
+                            ),
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.check_circle),
+                            title: const Text('Статус онбординга'),
+                            subtitle: Text(
+                              user!.isOnboarded ? 'Завершен' : 'Не завершен',
+                            ),
+                          ),
+                          if (user!.quitStat != null) ...[
+                            const SizedBox(height: 8),
+                            ListTile(
+                              leading: const Icon(Icons.timer),
+                              title: const Text('Дней без курения'),
+                              subtitle: Text(
+                                '${user!.quitStat!.daysWithoutSmoking} дней',
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -240,7 +703,10 @@ class AuthReg extends StatefulWidget {
 
   const AuthReg({super.key, this.onUserAuthenticated});
 
-  static void show(BuildContext context, {Function(User)? onUserAuthenticated}) {
+  static void show(
+    BuildContext context, {
+    Function(User)? onUserAuthenticated,
+  }) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -248,6 +714,7 @@ class AuthReg extends StatefulWidget {
       builder: (context) => AuthReg(onUserAuthenticated: onUserAuthenticated),
     );
   }
+
   @override
   State<AuthReg> createState() => _AuthState();
 }
@@ -288,8 +755,10 @@ class _AuthState extends State<AuthReg> {
           if (password == user.getPasswd) {
             Navigator.of(context).pop();
             if (user.getOnboarded) {
-              final onboardingService = await OnBoardingService.createOnboardingService(user);
+              final onboardingService =
+                  await OnBoardingService.createOnboardingService(user);
               await onboardingService.onboardingAuth();
+              await onboardingService.loadQuitStats();
             }
 
             if (widget.onUserAuthenticated != null) {
@@ -303,11 +772,17 @@ class _AuthState extends State<AuthReg> {
         }
       } else {
         User? existingUser = await AuthService.searchUser(
-            FirebaseDatabase.instance.refFromURL(
-                'https://smokequit-b0f8f-default-rtdb.firebaseio.com/'), email);
+          FirebaseDatabase.instance.refFromURL(
+            'https://smokequit-b0f8f-default-rtdb.firebaseio.com/',
+          ),
+          email,
+        );
 
         if (existingUser == null) {
-          final RegService reg = await RegService.createRegService(email, password);
+          final RegService reg = await RegService.createRegService(
+            email,
+            password,
+          );
           final user = reg.user;
 
           if (widget.onUserAuthenticated != null) {
@@ -329,10 +804,7 @@ class _AuthState extends State<AuthReg> {
 
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
@@ -354,10 +826,7 @@ class _AuthState extends State<AuthReg> {
           children: [
             Text(
               _isLogin ? "Вход" : "Регистрация",
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 24),
             TextField(
@@ -395,14 +864,14 @@ class _AuthState extends State<AuthReg> {
                   onPressed: _isLoading ? null : _submitForm,
                   child: _isLoading
                       ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : Text(_isLogin ? "Войти" : "Продолжить"),
                 ),
               ],
-            )
+            ),
           ],
         ),
       ),
@@ -496,7 +965,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
               TextFormField(
                 controller: _attemptsController,
                 decoration: const InputDecoration(
-                    labelText: "Кол-во попыток бросания"
+                  labelText: "Кол-во попыток бросания",
                 ),
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -520,9 +989,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
                   helperText: "Например: 15.05.2023",
                 ),
                 keyboardType: TextInputType.datetime,
-                inputFormatters: [
-                  LengthLimitingTextInputFormatter(10),
-                ],
+                inputFormatters: [LengthLimitingTextInputFormatter(10)],
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Введите дату';
@@ -550,9 +1017,9 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
               _isLoading
                   ? const CircularProgressIndicator()
                   : ElevatedButton(
-                onPressed: _validateAndSubmit,
-                child: const Text('Сохранить данные'),
-              ),
+                      onPressed: _validateAndSubmit,
+                      child: const Text('Сохранить данные'),
+                    ),
             ],
           ),
         ),
@@ -609,7 +1076,6 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
         _showError('Стоимость пачки должна быть положительным числом');
         return false;
       }
-
     } else if (_selectedValue == "Электронные сигареты") {
       final power = _powerController.text;
       final liquidPrice = _liquidPriceController.text;
@@ -705,7 +1171,9 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
         );
       }
 
-      final onboardingService = await OnBoardingService.createOnboardingService(widget.user);
+      final onboardingService = await OnBoardingService.createOnboardingService(
+        widget.user,
+      );
       await onboardingService.onboardingRegistration(
         smokingYears: smokingYears,
         smokingMonth: smokingMonth,
@@ -784,10 +1252,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
         isExpanded: true,
         hint: const Text("Выберите тип"),
         items: _types.map((type) {
-          return DropdownMenuItem<String>(
-            value: type,
-            child: Text(type),
-          );
+          return DropdownMenuItem<String>(value: type, child: Text(type));
         }).toList(),
         onChanged: (String? newVal) {
           setState(() {
@@ -804,10 +1269,7 @@ class OnBoardingWindowState extends State<OnBoardingWindow> {
       return [
         Text(
           "Выберите тип курения",
-          style: TextStyle(
-            color: Colors.grey,
-            fontStyle: FontStyle.italic,
-          ),
+          style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
         ),
       ];
     }

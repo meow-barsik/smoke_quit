@@ -1,8 +1,4 @@
-import 'dart:async';
 import 'dart:core';
-import 'dart:ffi';
-
-import 'package:firebase_database/firebase_database.dart';
 
 class User {
   final String _userId;
@@ -11,15 +7,15 @@ class User {
   bool _isAlternative;
   bool _isOnboarded;
   UserStats? stats;
-  QuitUser? quitStat;
+  QuitUser? _quitStat;
 
   User(
-      this._userId,
-      this._mail,
-      this._password,
-      this._isAlternative,
-      this._isOnboarded,
-      );
+    this._userId,
+    this._mail,
+    this._password,
+    this._isAlternative,
+    this._isOnboarded,
+  );
 
   Map<String, dynamic> getMap() {
     return {
@@ -27,7 +23,7 @@ class User {
       'mail': _mail,
       'password': _password,
       'isAlternative': _isAlternative,
-      'isOnboarded': _isOnboarded
+      'isOnboarded': _isOnboarded,
     };
   }
 
@@ -65,8 +61,11 @@ class User {
   String get getId => _userId;
   bool get getOnboarded => _isOnboarded;
 
-  set quitUser(QuitUser quitUser) {}
-  set isOnboarded(bool value) => _isOnboarded = value;}
+  QuitUser? get quitStat => _quitStat;
+  set quitStat(QuitUser? value) => _quitStat = value;
+
+  set isOnboarded(bool value) => _isOnboarded = value;
+}
 
 abstract class SmokingStats {
   double calculateMonthlyCost();
@@ -85,8 +84,8 @@ class VapeStats implements SmokingStats {
     required this.bottlePrice,
     required this.daysOnBottle,
     required this.puffPerDay,
-  })  : assert(bottlePrice > 0),
-        assert(daysOnBottle > 0);
+  }) : assert(bottlePrice > 0),
+       assert(daysOnBottle > 0);
 
   factory VapeStats.fromJson(Map<String, dynamic> json) {
     return VapeStats(
@@ -126,8 +125,8 @@ class CigStats implements SmokingStats {
     required this.cigPerDay,
     required this.packPrice,
     this.cigsPerPack = 20,
-  })  : assert(packPrice > 0),
-        assert(cigPerDay >= 0);
+  }) : assert(packPrice > 0),
+       assert(cigPerDay >= 0);
 
   factory CigStats.fromJson(Map<String, dynamic> json) {
     return CigStats(
@@ -194,7 +193,9 @@ class UserStats {
 
     DateTime lastAttemptDate;
     try {
-      lastAttemptDate = DateTime.parse(json['lastAttemptDate']?.toString() ?? '');
+      lastAttemptDate = DateTime.parse(
+        json['lastAttemptDate']?.toString() ?? '',
+      );
     } catch (e) {
       lastAttemptDate = DateTime.now();
     }
@@ -217,9 +218,15 @@ class UserStats {
   }
 }
 
-List<String> cravingsReason = ['Алкоголь', 'Компания', 'Утренний ритуал',
-  'Перерыв на работе', 'Кофейный или чайный перерыв', 'Стресс',
-  'Перекур после еды'];
+List<String> cravingsReason = [
+  'Алкоголь',
+  'Компания',
+  'Утренний ритуал',
+  'Перерыв на работе',
+  'Кофейный или чайный перерыв',
+  'Стресс',
+  'Перекур после еды',
+];
 
 // модель данных для статистики бросания человека
 class QuitUser {
@@ -231,21 +238,34 @@ class QuitUser {
   List<String> cravings = [];
   int daysOut;
 
-  QuitUser(this.quitId, this.quitStart, this.moneySaved, this.isQuiting,
-  this.cravings, this.daysOut, this.user) {
-    user.quitUser = this;
+  QuitUser(
+    this.quitId,
+    this.quitStart,
+    this.moneySaved,
+    this.isQuiting,
+    this.cravings,
+    this.daysOut,
+    this.user,
+  ) {
+    user.quitStat = this;
   }
 
-  factory QuitUser.newUser(user, quitId) {
+  factory QuitUser.newUser(User user, String quitId) {
     final DateTime start = DateTime.now();
 
     return QuitUser(quitId, start, 0, true, [], 0, user);
   }
 
-  factory QuitUser.byList(Map<String, dynamic> values, user) {
-    List<String> keys = ["quitId", 'quitStart', 'moneySaved',
-      'isQuiting', 'cravings', 'daysOut'];
-    Map<String, dynamic> sortedMap= {};
+  factory QuitUser.byList(Map<String, dynamic> values, User user) {
+    List<String> keys = [
+      "quitId",
+      'quitStart',
+      'moneySaved',
+      'isQuiting',
+      'cravings',
+      'daysOut',
+    ];
+    Map<String, dynamic> sortedMap = {};
 
     values.forEach((key, value) {
       for (String label in keys) {
@@ -255,19 +275,43 @@ class QuitUser {
       }
     });
 
-    return QuitUser(sortedMap['quitId'], sortedMap['quitStart'],
-        sortedMap['moneySaved'], sortedMap['isQuiting'],
-        sortedMap['cravings'], sortedMap['daysOut'], user);
+    // Parse quitStart from string to DateTime
+    DateTime quitStart;
+    try {
+      if (sortedMap['quitStart'] is String) {
+        quitStart = DateTime.parse(sortedMap['quitStart']);
+      } else {
+        quitStart = DateTime.now();
+      }
+    } catch (e) {
+      quitStart = DateTime.now();
+    }
+
+    // Parse cravings list
+    List<String> cravingsList = [];
+    if (sortedMap['cravings'] is List) {
+      cravingsList = List<String>.from(sortedMap['cravings']);
+    }
+
+    return QuitUser(
+      sortedMap['quitId']?.toString() ?? '',
+      quitStart,
+      (sortedMap['moneySaved'] as num?)?.toInt() ?? 0,
+      (sortedMap['isQuiting'] ?? false) as bool,
+      cravingsList,
+      (sortedMap['daysOut'] as num?)?.toInt() ?? 0,
+      user,
+    );
   }
 
   Map<String, dynamic> getMap() {
     return {
       'quitId': quitId,
-      'quitStart': quitStart,
+      'quitStart': quitStart.toIso8601String(),
       'moneySaved': moneySaved,
       'isQuiting': isQuiting,
       'cravings': cravings,
-      'daysOut': daysOut
+      'daysOut': daysOut,
     };
   }
 
@@ -275,7 +319,53 @@ class QuitUser {
     return {quitId: user.userId};
   }
 
+  // Расчет дней без курения
+  int get daysWithoutSmoking {
+    final now = DateTime.now();
+    return now.difference(quitStart).inDays;
+  }
 
+  // Расчет сэкономленных денег
+  double calculateMoneySaved(UserStats? userStats) {
+    if (userStats == null) return 0.0;
+
+    final days = daysWithoutSmoking;
+    final monthlyCost = userStats.getMonthlySavings();
+    final dailyCost = monthlyCost / 30;
+
+    return dailyCost * days;
+  }
+
+  // Расчет здоровья - улучшение состояния организма
+  Map<String, String> getHealthImprovements() {
+    final days = daysWithoutSmoking;
+
+    if (days <= 0) return {};
+
+    final improvements = <String, String>{};
+
+    if (days >= 1) improvements['1 день'] = 'Нормализуется давление и пульс';
+    if (days >= 2) improvements['2 дня'] = 'Восстанавливается обоняние и вкус';
+    if (days >= 3) improvements['3 дня'] = 'Улучшается дыхание';
+    if (days >= 7) improvements['1 неделя'] = 'Снижается риск инфаркта';
+    if (days >= 14) improvements['2 недели'] = 'Улучшается кровообращение';
+    if (days >= 30) improvements['1 месяц'] = 'Увеличивается объем легких';
+    if (days >= 90) improvements['3 месяца'] = 'Кашель уменьшается';
+    if (days >= 180) improvements['6 месяцев'] = 'Снижается риск заболеваний';
+    if (days >= 365)
+      improvements['1 год'] = 'Риск сердечных заболеваний снижается вдвое';
+
+    return improvements;
+  }
+
+  // Получение последнего достижения
+  String getLatestAchievement() {
+    final days = daysWithoutSmoking;
+    final achievements = getHealthImprovements();
+
+    if (achievements.isEmpty) return 'Сделайте первый шаг!';
+
+    final lastKey = achievements.keys.last;
+    return '${achievements[lastKey]} ($lastKey)';
+  }
 }
-
-
