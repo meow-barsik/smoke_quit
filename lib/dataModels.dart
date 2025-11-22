@@ -8,6 +8,7 @@ class User {
   bool _isOnboarded;
   UserStats? stats;
   QuitUser? _quitStat;
+  Map<String, dynamic>? userSummary; // статистика пользователя
 
   User(
     this._userId,
@@ -63,7 +64,7 @@ class User {
 
   QuitUser? get quitStat => _quitStat;
   set quitStat(QuitUser? value) => _quitStat = value;
-
+  
   set isOnboarded(bool value) => _isOnboarded = value;
 }
 
@@ -218,7 +219,8 @@ class UserStats {
   }
 }
 
-List<String> cravingsReason = [
+// Общие триггеры для всех типов курения
+List<String> _commonCravingsReasons = [
   'Алкоголь',
   'Компания',
   'Утренний ритуал',
@@ -227,6 +229,161 @@ List<String> cravingsReason = [
   'Стресс',
   'Перекур после еды',
 ];
+
+// Триггеры специфичные для обычных сигарет
+List<String> _cigaretteSpecificReasons = [
+  'Запах табака',
+  'Физическая привычка (держать в руках)',
+];
+
+// Триггеры специфичные для электронных сигарет
+List<String> _vapeSpecificReasons = [
+  'Скука/безделье',
+  'Игра с устройством',
+  'Желание попробовать новый вкус',
+  'Никотиновый ритуал',
+];
+
+// Функция для получения списка триггеров в зависимости от типа курения
+List<String> getCravingsReasons(User? user) {
+  if (user == null) {
+    return _commonCravingsReasons;
+  }
+  
+  if (user.isAlternative) {
+    // Для электронных сигарет: общие + специфичные для вейпа
+    return [
+      ..._commonCravingsReasons,
+      ..._vapeSpecificReasons,
+    ];
+  } else {
+    // Для обычных сигарет: общие + специфичные для сигарет
+    return [
+      ..._commonCravingsReasons,
+      ..._cigaretteSpecificReasons,
+    ];
+  }
+}
+
+// Для обратной совместимости
+List<String> get cravingsReason => _commonCravingsReasons;
+
+// Модель для записи о желании курить
+class CravingRecord {
+  final String id;
+  final DateTime timestamp;
+  final String trigger;
+  final int motivationLevel; // 1-10
+  final bool overcome; // удалось ли преодолеть желание
+  final String? notes;
+
+  CravingRecord({
+    required this.id,
+    required this.timestamp,
+    required this.trigger,
+    required this.motivationLevel,
+    required this.overcome,
+    this.notes,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'timestamp': timestamp.toIso8601String(),
+    'trigger': trigger,
+    'motivationLevel': motivationLevel,
+    'overcome': overcome,
+    'notes': notes,
+  };
+
+  factory CravingRecord.fromJson(Map<String, dynamic> json) {
+    return CravingRecord(
+      id: json['id']?.toString() ?? '',
+      timestamp: DateTime.parse(json['timestamp']?.toString() ?? DateTime.now().toIso8601String()),
+      trigger: json['trigger']?.toString() ?? 'Другое',
+      motivationLevel: (json['motivationLevel'] as num?)?.toInt() ?? 5,
+      overcome: (json['overcome'] ?? false) as bool,
+      notes: json['notes']?.toString(),
+    );
+  }
+}
+
+// Модель для дневника курения
+class SmokingDiary {
+  final String id;
+  final String userId;
+  final DateTime date;
+  int cigarettesSmoked; // количество выкуренных сигарет
+  int creaturesResisted; // количество преодоленных желаний
+  List<CravingRecord> cravings;
+  String? mood; // настроение: хорошее, нормальное, плохое
+  double? motivationScore; // оценка мотивации 1-10
+
+  SmokingDiary({
+    required this.id,
+    required this.userId,
+    required this.date,
+    this.cigarettesSmoked = 0,
+    this.creaturesResisted = 0,
+    List<CravingRecord>? cravings,
+    this.mood,
+    this.motivationScore,
+  }) : cravings = cravings ?? [];
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'userId': userId,
+    'date': date.toIso8601String(),
+    'cigarettesSmoked': cigarettesSmoked,
+    'creaturesResisted': creaturesResisted,
+    'cravings': cravings.map((c) => c.toJson()).toList(),
+    'mood': mood,
+    'motivationScore': motivationScore,
+  };
+
+  factory SmokingDiary.fromJson(Map<String, dynamic> json, String userId) {
+    final cravingsList = <CravingRecord>[];
+    if (json['cravings'] is List) {
+      cravingsList.addAll(
+        (json['cravings'] as List).map((c) => CravingRecord.fromJson(c as Map<String, dynamic>))
+      );
+    }
+
+    return SmokingDiary(
+      id: json['id']?.toString() ?? '',
+      userId: userId,
+      date: DateTime.parse(json['date']?.toString() ?? DateTime.now().toIso8601String()),
+      cigarettesSmoked: (json['cigarettesSmoked'] as num?)?.toInt() ?? 0,
+      creaturesResisted: (json['creaturesResisted'] as num?)?.toInt() ?? 0,
+      cravings: cravingsList,
+      mood: json['mood']?.toString(),
+      motivationScore: (json['motivationScore'] as num?)?.toDouble(),
+    );
+  }
+
+  // Добавить запись о желании курить
+  void addCravingRecord(CravingRecord record) {
+    cravings.add(record);
+    if (record.overcome) {
+      creaturesResisted++;
+    }
+  }
+
+  // Получить статистику дня
+  Map<String, dynamic> getDayStats() {
+    final overcomeCount = cravings.where((c) => c.overcome).length;
+    final totalCravings = cravings.length;
+    
+    return {
+      'totalCravings': totalCravings,
+      'overcome': overcomeCount,
+      'failed': totalCravings - overcomeCount,
+      'successRate': totalCravings > 0 ? (overcomeCount / totalCravings * 100).toStringAsFixed(1) : '0',
+      'cigarettesSmoked': cigarettesSmoked,
+      'mood': mood ?? 'Не указано',
+      'motivationScore': motivationScore ?? 0,
+    };
+  }
+}
 
 // модель данных для статистики бросания человека
 class QuitUser {
@@ -237,6 +394,11 @@ class QuitUser {
   bool isQuiting;
   List<String> cravings = [];
   int daysOut;
+  List<SmokingDiary> diaries = []; // дневники курения
+  List<CravingRecord> allCravings = []; // все записи о желаниях
+  DateTime? quitEnd; // дата окончания попытки (если прервана)
+  String status; // 'active', 'completed', 'failed'
+  bool failedDueToCraving; // завершена ли из-за непреодоленной тяги
 
   QuitUser(
     this.quitId,
@@ -245,15 +407,17 @@ class QuitUser {
     this.isQuiting,
     this.cravings,
     this.daysOut,
-    this.user,
-  ) {
+    this.user, {
+    this.quitEnd,
+    this.status = 'active',
+    this.failedDueToCraving = false,
+  }) {
     user.quitStat = this;
   }
 
   factory QuitUser.newUser(User user, String quitId) {
     final DateTime start = DateTime.now();
-
-    return QuitUser(quitId, start, 0, true, [], 0, user);
+    return QuitUser(quitId, start, 0, true, [], 0, user, status: 'active');
   }
 
   factory QuitUser.byList(Map<String, dynamic> values, User user) {
@@ -264,6 +428,9 @@ class QuitUser {
       'isQuiting',
       'cravings',
       'daysOut',
+      'quitEnd',
+      'status',
+      'failedDueToCraving',
     ];
     Map<String, dynamic> sortedMap = {};
 
@@ -275,7 +442,6 @@ class QuitUser {
       }
     });
 
-    // Parse quitStart from string to DateTime
     DateTime quitStart;
     try {
       if (sortedMap['quitStart'] is String) {
@@ -287,7 +453,15 @@ class QuitUser {
       quitStart = DateTime.now();
     }
 
-    // Parse cravings list
+    DateTime? quitEnd;
+    try {
+      if (sortedMap['quitEnd'] is String && sortedMap['quitEnd'] != null) {
+        quitEnd = DateTime.parse(sortedMap['quitEnd']);
+      }
+    } catch (e) {
+      quitEnd = null;
+    }
+
     List<String> cravingsList = [];
     if (sortedMap['cravings'] is List) {
       cravingsList = List<String>.from(sortedMap['cravings']);
@@ -301,6 +475,9 @@ class QuitUser {
       cravingsList,
       (sortedMap['daysOut'] as num?)?.toInt() ?? 0,
       user,
+      quitEnd: quitEnd,
+      status: sortedMap['status']?.toString() ?? 'active',
+      failedDueToCraving: (sortedMap['failedDueToCraving'] ?? false) as bool,
     );
   }
 
@@ -312,6 +489,11 @@ class QuitUser {
       'isQuiting': isQuiting,
       'cravings': cravings,
       'daysOut': daysOut,
+      'quitEnd': quitEnd?.toIso8601String(),
+      'status': status,
+      'failedDueToCraving': failedDueToCraving,
+      'diaries': diaries.map((d) => d.toJson()).toList(),
+      'allCravings': allCravings.map((c) => c.toJson()).toList(),
     };
   }
 
@@ -319,53 +501,245 @@ class QuitUser {
     return {quitId: user.userId};
   }
 
-  // Расчет дней без курения
   int get daysWithoutSmoking {
     final now = DateTime.now();
-    return now.difference(quitStart).inDays;
+    final endDate = quitEnd ?? now;
+    return endDate.difference(quitStart).inDays;
   }
 
-  // Расчет сэкономленных денег
   double calculateMoneySaved(UserStats? userStats) {
     if (userStats == null) return 0.0;
-
+    
     final days = daysWithoutSmoking;
     final monthlyCost = userStats.getMonthlySavings();
     final dailyCost = monthlyCost / 30;
-
+    
     return dailyCost * days;
   }
 
-  // Расчет здоровья - улучшение состояния организма
   Map<String, String> getHealthImprovements() {
     final days = daysWithoutSmoking;
-
+    
     if (days <= 0) return {};
-
+    
     final improvements = <String, String>{};
-
-    if (days >= 1) improvements['1 день'] = 'Нормализуется давление и пульс';
-    if (days >= 2) improvements['2 дня'] = 'Восстанавливается обоняние и вкус';
-    if (days >= 3) improvements['3 дня'] = 'Улучшается дыхание';
-    if (days >= 7) improvements['1 неделя'] = 'Снижается риск инфаркта';
-    if (days >= 14) improvements['2 недели'] = 'Улучшается кровообращение';
-    if (days >= 30) improvements['1 месяц'] = 'Увеличивается объем легких';
-    if (days >= 90) improvements['3 месяца'] = 'Кашель уменьшается';
-    if (days >= 180) improvements['6 месяцев'] = 'Снижается риск заболеваний';
-    if (days >= 365)
-      improvements['1 год'] = 'Риск сердечных заболеваний снижается вдвое';
-
+    final isVape = user.isAlternative;
+    
+    if (isVape) {
+      // Улучшения для электронных сигарет (более мягкие, но все равно важные)
+      if (days >= 1) improvements['1 день'] = 'Снижается потребление никотина';
+      if (days >= 3) improvements['3 дня'] = 'Улучшается гидратация организма';
+      if (days >= 7) improvements['1 неделя'] = 'Восстанавливается вкус и обоняние';
+      if (days >= 14) improvements['2 недели'] = 'Улучшается состояние ротовой полости';
+      if (days >= 30) improvements['1 месяц'] = 'Снижается зависимость от никотина';
+      if (days >= 90) improvements['3 месяца'] = 'Улучшается общее самочувствие';
+      if (days >= 180) improvements['6 месяцев'] = 'Значительно снижается никотиновая зависимость';
+      if (days >= 365) improvements['1 год'] = 'Почти полное избавление от никотиновой зависимости';
+    } else {
+      // Улучшения для обычных сигарет (более выраженные улучшения)
+      if (days >= 1) improvements['1 день'] = 'Нормализуется давление и пульс';
+      if (days >= 2) improvements['2 дня'] = 'Восстанавливается обоняние и вкус';
+      if (days >= 3) improvements['3 дня'] = 'Улучшается дыхание, уходит угарный газ';
+      if (days >= 7) improvements['1 неделя'] = 'Снижается риск инфаркта, очищаются легкие от смол';
+      if (days >= 14) improvements['2 недели'] = 'Улучшается кровообращение, кожа становится здоровее';
+      if (days >= 30) improvements['1 месяц'] = 'Увеличивается объем легких, кашель уменьшается';
+      if (days >= 90) improvements['3 месяца'] = 'Значительно улучшается функция легких';
+      if (days >= 180) improvements['6 месяцев'] = 'Снижается риск рака легких и других заболеваний';
+      if (days >= 365) improvements['1 год'] = 'Риск сердечных заболеваний снижается вдвое';
+    }
+    
     return improvements;
   }
 
-  // Получение последнего достижения
   String getLatestAchievement() {
     final days = daysWithoutSmoking;
     final achievements = getHealthImprovements();
-
+    
     if (achievements.isEmpty) return 'Сделайте первый шаг!';
-
+    
     final lastKey = achievements.keys.last;
     return '${achievements[lastKey]} ($lastKey)';
+  }
+
+  // Получить или создать дневник на сегодня
+  SmokingDiary getTodayDiary() {
+    final today = DateTime.now();
+    final todayFormatted = DateTime(today.year, today.month, today.day);
+    
+    try {
+      return diaries.firstWhere(
+        (d) => DateTime(d.date.year, d.date.month, d.date.day) == todayFormatted,
+      );
+    } catch (e) {
+      final newDiary = SmokingDiary(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        userId: user.userId,
+        date: today,
+      );
+      diaries.add(newDiary);
+      return newDiary;
+    }
+  }
+
+  // Получить статистику по преодоленным желаниям
+  Map<String, int> getCravingStats() {
+    int totalCravings = 0;
+    int overcome = 0;
+    int failed = 0;
+
+    for (var craving in allCravings) {
+      totalCravings++;
+      if (craving.overcome) {
+        overcome++;
+      } else {
+        failed++;
+      }
+    }
+
+    return {
+      'total': totalCravings,
+      'overcome': overcome,
+      'failed': failed,
+    };
+  }
+
+  // Получить самый частый триггер
+  String? getMostCommonTrigger() {
+    if (allCravings.isEmpty) return null;
+
+    final triggerCounts = <String, int>{};
+    for (var craving in allCravings) {
+      triggerCounts[craving.trigger] = (triggerCounts[craving.trigger] ?? 0) + 1;
+    }
+
+    return triggerCounts.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+  }
+
+  // Получить среднюю мотивацию
+  double getAverageMotivation() {
+    if (allCravings.isEmpty) return 0.0;
+    final sum = allCravings.fold<int>(0, (prev, c) => prev + c.motivationLevel);
+    return sum / allCravings.length;
+  }
+
+  String getStatusMessage() {
+    if (status == 'active') {
+      return 'Активная попытка';
+    } else if (status == 'completed') {
+      return 'Успешно завершена ✓';
+    } else if (status == 'failed') {
+      if (failedDueToCraving) {
+        return 'Завершена: непреодолимая тяга ❌';
+      }
+      return 'Прервана ✗';
+    }
+    return 'Неизвестный статус';
+  }
+}
+
+// Модель статьи
+class Article {
+  final String id;
+  final String title;
+  final String content;
+  final String category;
+  final String author;
+  final DateTime createdAt;
+  final bool isPublished;
+
+  Article({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.category,
+    required this.author,
+    required this.createdAt,
+    required this.isPublished,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'content': content,
+      'category': category,
+      'author': author,
+      'createdAt': createdAt.toIso8601String(),
+      'isPublished': isPublished,
+    };
+  }
+
+  factory Article.fromJson(Map<String, dynamic> json) {
+    return Article(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      content: json['content']?.toString() ?? '',
+      category: json['category']?.toString() ?? 'Общее',
+      author: json['author']?.toString() ?? 'Администратор',
+      createdAt: DateTime.parse(json['createdAt']?.toString() ?? DateTime.now().toIso8601String()),
+      isPublished: (json['isPublished'] ?? true) as bool,
+    );
+  }
+
+  // Форматированная дата создания
+  String get formattedDate {
+    return '${createdAt.day}.${createdAt.month}.${createdAt.year}';
+  }
+
+  // Сокращенный контент для превью
+  String get previewContent {
+    if (content.length <= 150) return content;
+    return '${content.substring(0, 150)}...';
+  }
+}
+
+// Категории статей
+List<String> articleCategories = [
+  'Здоровье',
+  'Советы',
+  'Мотивация',
+  'Наука',
+  'Истории успеха',
+  'Общее'
+];
+
+// Модель администратора
+class AdminUser {
+  final String id;
+  final String email;
+  final String fullName;
+  final bool isActive;
+  final String role; // 'admin', 'moderator', 'editor'
+  final DateTime createdAt;
+
+  AdminUser({
+    required this.id,
+    required this.email,
+    required this.fullName,
+    required this.isActive,
+    required this.role,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'email': email,
+      'fullName': fullName,
+      'isActive': isActive,
+      'role': role,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory AdminUser.fromJson(String id, Map<String, dynamic> json) {
+    return AdminUser(
+      id: id,
+      email: json['email'] ?? '',
+      fullName: json['fullName'] ?? '',
+      isActive: json['isActive'] ?? true,
+      role: json['role'] ?? 'moderator',
+      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+    );
   }
 }
